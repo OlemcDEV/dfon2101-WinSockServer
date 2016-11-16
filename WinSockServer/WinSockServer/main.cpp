@@ -8,6 +8,7 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <iostream>
+#include <thread>
 
 // Need to link with Ws2_32.lib
 #pragma comment (lib, "Ws2_32.lib")
@@ -16,22 +17,56 @@
 #define DEFAULT_BUFLEN 512
 #define DEFAULT_PORT "27015"
 
+WSADATA wsaData;
+int iResult;
+
+SOCKET ListenSocket = INVALID_SOCKET;
+SOCKET ClientSocket = INVALID_SOCKET;
+
+struct addrinfo *result = NULL;
+struct addrinfo hints;
+
+int iSendResult;
+char recvbuf[DEFAULT_BUFLEN];
+char sendbuf[DEFAULT_BUFLEN];
+int recvbuflen = DEFAULT_BUFLEN;
+bool run = true;
+
+void recieveServer() {
+        do {
+            iResult = recv(ClientSocket, recvbuf, recvbuflen, 0);
+            if (iResult > 0) {
+                std::cout << "Client: " << recvbuf << std::endl;
+                // Echo the buffer back to the sender
+                //iSendResult = send(ClientSocket, recvbuf, iResult, 0);
+                if (iSendResult == SOCKET_ERROR) {
+                    printf("send failed with error: %d\n", WSAGetLastError());
+                    closesocket(ClientSocket);
+                    WSACleanup();
+                }
+                //std::cout << std::endl << "Sent this: " << recvbuf << std::endl;
+            }
+            else if (iResult == 0)
+                printf("Connection closing...\n");
+            else {
+                printf("recv failed with error: %d\n", WSAGetLastError());
+                closesocket(ClientSocket);
+                WSACleanup();
+            }
+
+        } while (iResult > 0);
+}
+
+void sendServer() {
+    do {
+        std::cin.getline(sendbuf, 512);
+        sendbuf[(int)strlen(sendbuf)] = '\0';
+        iSendResult = send(ClientSocket, sendbuf, (int)strlen(sendbuf) + 1, 0);
+    } while (true);
+}
+
 int __cdecl main(void)
 {
-    WSADATA wsaData;
-    int iResult;
-
-    SOCKET ListenSocket = INVALID_SOCKET;
-    SOCKET ClientSocket = INVALID_SOCKET;
-
-    struct addrinfo *result = NULL;
-    struct addrinfo hints;
-
-    int iSendResult;
-    char recvbuf[DEFAULT_BUFLEN];
-    int recvbuflen = DEFAULT_BUFLEN;
-    bool run = true;
-
     // Initialize Winsock
     iResult = WSAStartup(MAKEWORD(2, 2), &wsaData);
     if (iResult != 0) {
@@ -45,15 +80,14 @@ int __cdecl main(void)
     hints.ai_protocol = IPPROTO_TCP;
     hints.ai_flags = AI_PASSIVE;
 
-    while (run) {
-    // Resolve the server address and port
-    iResult = getaddrinfo(NULL, DEFAULT_PORT, &hints, &result);
-    if (iResult != 0) {
-        printf("getaddrinfo failed with error: %d\n", iResult);
-        WSACleanup();
-        return 1;
-    }
-    
+        // Resolve the server address and port
+        iResult = getaddrinfo(NULL, DEFAULT_PORT, &hints, &result);
+        if (iResult != 0) {
+            printf("getaddrinfo failed with error: %d\n", iResult);
+            WSACleanup();
+            return 1;
+        }
+
         // Create a SOCKET for connecting to server
         ListenSocket = socket(result->ai_family, result->ai_socktype, result->ai_protocol);
         if (ListenSocket == INVALID_SOCKET) {
@@ -62,7 +96,7 @@ int __cdecl main(void)
             WSACleanup();
             return 1;
         }
-        
+
         // Setup the TCP listening socket
         iResult = bind(ListenSocket, result->ai_addr, (int)result->ai_addrlen);
         if (iResult == SOCKET_ERROR) {
@@ -91,46 +125,24 @@ int __cdecl main(void)
             WSACleanup();
             return 1;
         }
-
         // No longer need server socket
         closesocket(ListenSocket);
-        // Receive until the peer shuts down the connection
-        do {
-            iResult = recv(ClientSocket, recvbuf, recvbuflen, 0);
-            if (iResult > 0) {
-                std::cout << "Recieved: " << recvbuf;
-                // Echo the buffer back to the sender
-                iSendResult = send(ClientSocket, recvbuf, iResult, 0);
-                if (iSendResult == SOCKET_ERROR) {
-                    printf("send failed with error: %d\n", WSAGetLastError());
-                    closesocket(ClientSocket);
-                    WSACleanup();
-                    return 1;
-                }
-                std::cout << std::endl << "Sent this: " << recvbuf;
-            }
-            else if (iResult == 0)
-                printf("Connection closing...\n");
-            else {
-                printf("recv failed with error: %d\n", WSAGetLastError());
-                closesocket(ClientSocket);
-                WSACleanup();
-                return 1;
-            }
 
-        } while (iResult > 0);
-    }
-        // shutdown the connection since we're done
-        iResult = shutdown(ClientSocket, SD_SEND);
-        if (iResult == SOCKET_ERROR) {
-            printf("shutdown failed with error: %d\n", WSAGetLastError());
-            closesocket(ClientSocket);
-            WSACleanup();
-            return 1;
-        }
-        // cleanup
-        closesocket(ClientSocket);
-        WSACleanup();
+        std::thread t1(recieveServer);
+        std::thread t2(sendServer);
+        t1.join();
+        t2.join();
 
-        return 0;
+        //iResult = shutdown(ClientSocket, SD_SEND);
+        //if (iResult == SOCKET_ERROR) {
+        //    printf("shutdown failed with error: %d\n", WSAGetLastError());
+        //    closesocket(ClientSocket);
+        //    WSACleanup();
+        //    return 1;
+        //}
+        //// cleanup
+        //closesocket(ClientSocket);
+        //WSACleanup();
+
+        //return 0;
     }
